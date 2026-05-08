@@ -143,19 +143,19 @@
         accessPanel.textContent = `허용된 IP(${data.ip})에서 접속했습니다.`;
       } else {
         accessPanel.className = "mb-5 rounded-md border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100";
-        accessPanel.textContent = `요청 거절: 현재 IP(${data.ip})는 허용된 IP가 아닙니다.`;
+        accessPanel.textContent = `기록 제한: 현재 IP(${data.ip})는 허용된 IP가 아닙니다. 기존 기록은 볼 수 있습니다.`;
       }
     } catch (error) {
       isAllowedIp = false;
       accessPanel.className = "mb-5 rounded-md border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100";
-      accessPanel.textContent = "요청 거절: 접속 IP를 확인할 수 없습니다.";
+      accessPanel.textContent = "기록 제한: 접속 IP를 확인할 수 없습니다. 기존 기록은 볼 수 있습니다.";
     }
 
     setFormEnabled(isAllowedIp && hasSupabaseConfig());
   }
 
   async function loadRecords() {
-    if (!supabaseClient || !isAllowedIp) {
+    if (!supabaseClient) {
       renderChart([]);
       recordCount.textContent = "0개 기록";
       return;
