@@ -9,9 +9,10 @@
 
   const ALLOWED_IP = "222.98.247.233";
   const TABLE_NAME = "SpeedRecord";
-  const TEST_DOWNLOAD_URL = "https://speed.cloudflare.com/__down?bytes=157286400";
-  const TEST_DURATION_MS = 12000;
-  const MIN_SAMPLE_MS = 4000;
+  const TEST_DOWNLOAD_URL = "https://speed.cloudflare.com/__down?bytes=209715200";
+  const TEST_DURATION_MS = 15000;
+  const MIN_SAMPLE_MS = 5000;
+  const PARALLEL_STREAMS = 4;
 
   const form = document.getElementById("recordForm");
   const speedInput = document.getElementById("speedInput");
@@ -54,36 +55,57 @@
   }
 
   async function measureDownloadSpeedKbps(onProgress) {
-    const controller = new AbortController();
     const startTime = performance.now();
-    const response = await fetch(TEST_DOWNLOAD_URL, {
-      cache: "no-store",
-      signal: controller.signal
-    });
+    let receivedLength = 0;
+    let lastProgressAt = 0;
 
-    if (!response.ok || !response.body) {
-      throw new Error("속도 측정용 데이터를 받을 수 없습니다.");
+    async function runStream(index) {
+      const controller = new AbortController();
+      const url = `${TEST_DOWNLOAD_URL}&stream=${index}&cacheBust=${Date.now()}`;
+
+      try {
+        const response = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error("속도 측정용 데이터를 받을 수 없습니다.");
+        }
+
+        const reader = response.body.getReader();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          receivedLength += value.length;
+
+          const elapsedMs = performance.now() - startTime;
+          if (typeof onProgress === "function" && elapsedMs - lastProgressAt >= 700) {
+            lastProgressAt = elapsedMs;
+            const currentKbps = (receivedLength * 8) / (elapsedMs / 1000) / 1000;
+            onProgress(currentKbps, elapsedMs);
+          }
+
+          if (elapsedMs >= TEST_DURATION_MS && elapsedMs >= MIN_SAMPLE_MS) {
+            await reader.cancel();
+            controller.abort();
+            break;
+          }
+        }
+      } catch (error) {
+        if (error.name !== "AbortError") throw error;
+      }
     }
 
-    const reader = response.body.getReader();
-    let receivedLength = 0;
+    const results = await Promise.allSettled(
+      Array.from({ length: PARALLEL_STREAMS }, (_, index) => runStream(index))
+    );
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      receivedLength += value.length;
-
-      const elapsedMs = performance.now() - startTime;
-      if (typeof onProgress === "function" && elapsedMs >= 1000) {
-        const currentKbps = (receivedLength * 8) / (elapsedMs / 1000) / 1000;
-        onProgress(currentKbps, elapsedMs);
-      }
-
-      if (elapsedMs >= TEST_DURATION_MS && elapsedMs >= MIN_SAMPLE_MS) {
-        await reader.cancel();
-        controller.abort();
-        break;
-      }
+    const failures = results.filter((result) => result.status === "rejected");
+    if (receivedLength <= 0 && failures.length > 0) {
+      throw failures[0].reason;
     }
 
     const durationInSeconds = (performance.now() - startTime) / 1000;
@@ -285,7 +307,7 @@
 
     try {
       setBusy(true);
-      setStatus("최대 약 12초 동안 다운로드 속도를 측정 중입니다...", "muted");
+      setStatus("최대 약 15초 동안 병렬 다운로드 속도를 측정 중입니다...", "muted");
 
       const speed = await measureDownloadSpeedKbps((currentKbps, elapsedMs) => {
         const seconds = Math.round(elapsedMs / 1000);

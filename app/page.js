@@ -46,7 +46,7 @@ export default function Home() {
               </select>
             </div>
             <p className="text-sm leading-6 text-zinc-400">
-              자동 측정은 최대 약 12초 동안 진행되며, 네트워크 속도에 따라 데이터 사용량이 달라집니다.
+              자동 측정은 최대 약 15초 동안 병렬 다운로드로 진행되며, 네트워크 속도에 따라 데이터 사용량이 달라집니다.
               직접 입력할 때는 단위를 꼭 확인하세요.
             </p>
 
