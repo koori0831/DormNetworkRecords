@@ -9,17 +9,11 @@
 
   const ALLOWED_IP = "222.98.247.233";
   const TABLE_NAME = "SpeedRecord";
-  const CLOUDFLARE_TEST_URL = "https://speed.cloudflare.com/__down?bytes=209715200";
-  const FAST_TARGETS_URL = `${SUPABASE_URL}/functions/v1/fast-targets`;
-  const TEST_DURATION_MS = 15000;
-  const MIN_SAMPLE_MS = 5000;
-  const PARALLEL_STREAMS = 5;
 
   const form = document.getElementById("recordForm");
   const speedInput = document.getElementById("speedInput");
   const unitSelect = document.getElementById("unitSelect");
   const saveButton = document.getElementById("saveButton");
-  const measureButton = document.getElementById("measureButton");
   const statusMessage = document.getElementById("statusMessage");
   const accessPanel = document.getElementById("accessPanel");
   const recordCount = document.getElementById("recordCount");
@@ -38,7 +32,6 @@
     speedInput.disabled = !enabled;
     unitSelect.disabled = !enabled;
     saveButton.disabled = !enabled;
-    measureButton.disabled = !enabled;
   }
 
   function hasSupabaseConfig() {
@@ -47,105 +40,6 @@
 
   function toKbps(value, unit) {
     return unit === "mbps" ? value * 1000 : value;
-  }
-
-  function setBusy(isBusy) {
-    const enabled = !isBusy && isAllowedIp && hasSupabaseConfig();
-    setFormEnabled(enabled);
-    measureButton.textContent = isBusy ? "측정 중..." : "측정하고 기록하기";
-  }
-
-  function addCacheBust(url, index) {
-    const separator = url.includes("?") ? "&" : "?";
-    return `${url}${separator}stream=${index}&cacheBust=${Date.now()}`;
-  }
-
-  async function getFastTargets() {
-    const response = await fetch(FAST_TARGETS_URL, {
-      cache: "no-store",
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        authorization: `Bearer ${SUPABASE_ANON_KEY}`
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Fast.com 대상 조회 실패: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const targets = (data.targets || [])
-      .map((target) => target.url)
-      .filter(Boolean);
-
-    if (targets.length === 0) {
-      throw new Error("Fast.com 측정 대상이 없습니다.");
-    }
-
-    return targets;
-  }
-
-  async function measureDownloadSpeedKbps(targetUrls, onProgress) {
-    const startTime = performance.now();
-    const urls = targetUrls && targetUrls.length > 0 ? targetUrls : [CLOUDFLARE_TEST_URL];
-    let receivedLength = 0;
-    let lastProgressAt = 0;
-
-    async function runStream(index) {
-      const controller = new AbortController();
-      const url = addCacheBust(urls[index % urls.length], index);
-
-      try {
-        const response = await fetch(url, {
-          cache: "no-store",
-          signal: controller.signal
-        });
-
-        if (!response.ok || !response.body) {
-          throw new Error("속도 측정용 데이터를 받을 수 없습니다.");
-        }
-
-        const reader = response.body.getReader();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          receivedLength += value.length;
-
-          const elapsedMs = performance.now() - startTime;
-          if (typeof onProgress === "function" && elapsedMs - lastProgressAt >= 700) {
-            lastProgressAt = elapsedMs;
-            const currentKbps = (receivedLength * 8) / (elapsedMs / 1000) / 1000;
-            onProgress(currentKbps, elapsedMs);
-          }
-
-          if (elapsedMs >= TEST_DURATION_MS && elapsedMs >= MIN_SAMPLE_MS) {
-            await reader.cancel();
-            controller.abort();
-            break;
-          }
-        }
-      } catch (error) {
-        if (error.name !== "AbortError") throw error;
-      }
-    }
-
-    const results = await Promise.allSettled(
-      Array.from({ length: PARALLEL_STREAMS }, (_, index) => runStream(index))
-    );
-
-    const failures = results.filter((result) => result.status === "rejected");
-    if (receivedLength <= 0 && failures.length > 0) {
-      throw failures[0].reason;
-    }
-
-    const durationInSeconds = (performance.now() - startTime) / 1000;
-    if (durationInSeconds <= 0 || receivedLength <= 0) {
-      throw new Error("속도 측정 결과가 올바르지 않습니다.");
-    }
-
-    return Number(((receivedLength * 8) / durationInSeconds / 1000).toFixed(2));
   }
 
   function formatTime(value) {
@@ -282,34 +176,18 @@
     renderChart(records);
   }
 
-  async function insertSpeedRecord(speed) {
-    const { error } = await supabaseClient
-      .from(TABLE_NAME)
-      .insert([{ speed }]);
+  async function saveRecord(event) {
+    event.preventDefault();
 
-    if (error) {
-      throw error;
-    }
-  }
-
-  function canRecord() {
     if (!isAllowedIp) {
       setStatus("허용된 IP에서만 기록할 수 있습니다.", "error");
-      return false;
+      return;
     }
 
     if (!supabaseClient) {
       setStatus("Supabase URL과 Anon Key를 먼저 설정하세요.", "error");
-      return false;
+      return;
     }
-
-    return true;
-  }
-
-  async function saveRecord(event) {
-    event.preventDefault();
-
-    if (!canRecord()) return;
 
     const rawSpeed = Number(speedInput.value);
     if (!Number.isFinite(rawSpeed) || rawSpeed <= 0) {
@@ -319,54 +197,23 @@
     }
 
     const speed = Number(toKbps(rawSpeed, unitSelect.value).toFixed(2));
+    saveButton.disabled = true;
+    setStatus("기록 중입니다...", "muted");
 
-    try {
-      setBusy(true);
-      setStatus("기록 중입니다...", "muted");
-      await insertSpeedRecord(speed);
-      speedInput.value = "";
-      setStatus(`${speed.toLocaleString("ko-KR")} Kbps로 저장했습니다.`, "success");
-      await loadRecords();
-    } catch (error) {
+    const { error } = await supabaseClient
+      .from(TABLE_NAME)
+      .insert([{ speed }]);
+
+    saveButton.disabled = false;
+
+    if (error) {
       setStatus(`저장하지 못했습니다: ${error.message}`, "error");
-    } finally {
-      setBusy(false);
+      return;
     }
-  }
 
-  async function measureAndRecord() {
-    if (!canRecord()) return;
-
-    try {
-      setBusy(true);
-      setStatus("Fast.com 측정 대상을 가져오는 중입니다...", "muted");
-
-      let targetUrls = [];
-      try {
-        targetUrls = await getFastTargets();
-      } catch (error) {
-        setStatus(`Fast.com 대상 조회 실패. Cloudflare로 측정합니다: ${error.message}`, "muted");
-      }
-
-      setStatus(`${targetUrls.length > 0 ? "Netflix" : "Cloudflare"} 병렬 다운로드 속도를 측정 중입니다...`, "muted");
-
-      const speed = await measureDownloadSpeedKbps(targetUrls, (currentKbps, elapsedMs) => {
-        const seconds = Math.round(elapsedMs / 1000);
-        setStatus(`${seconds}초 측정 중... 현재 약 ${currentKbps.toLocaleString("ko-KR", { maximumFractionDigits: 0 })} Kbps`, "muted");
-      });
-
-      speedInput.value = speed;
-      unitSelect.value = "kbps";
-
-      setStatus(`${speed.toLocaleString("ko-KR")} Kbps 측정 완료. 기록 중입니다...`, "muted");
-      await insertSpeedRecord(speed);
-      setStatus(`${speed.toLocaleString("ko-KR")} Kbps로 측정하고 저장했습니다.`, "success");
-      await loadRecords();
-    } catch (error) {
-      setStatus(`측정 또는 저장에 실패했습니다: ${error.message}`, "error");
-    } finally {
-      setBusy(false);
-    }
+    speedInput.value = "";
+    setStatus(`${speed.toLocaleString("ko-KR")} Kbps로 저장했습니다.`, "success");
+    await loadRecords();
   }
 
   async function init() {
@@ -384,6 +231,5 @@
   }
 
   form.addEventListener("submit", saveRecord);
-  measureButton.addEventListener("click", measureAndRecord);
   init();
 })();

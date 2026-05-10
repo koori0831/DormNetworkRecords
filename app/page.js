@@ -10,7 +10,7 @@ export default function Home() {
             Wi-Fi 속도 기록
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-sm leading-6 text-zinc-400 sm:text-base">
-            버튼 한 번으로 현재 다운로드 속도를 측정하고 Supabase에 기록합니다.
+            fast.com 등에서 측정한 현재 속도를 입력하고 Supabase에 기록합니다.
             아래 차트에서 누적 기록을 시간순으로 확인할 수 있습니다.
           </p>
         </div>
@@ -46,24 +46,16 @@ export default function Home() {
               </select>
             </div>
             <p className="text-sm leading-6 text-zinc-400">
-              자동 측정은 최대 약 15초 동안 Netflix 또는 Cloudflare 병렬 다운로드로 진행되며,
-              네트워크 속도에 따라 데이터 사용량이 달라집니다. 직접 입력할 때는 단위를 꼭 확인하세요.
+              입력 전에 단위를 꼭 확인하세요. 기본 단위는 Kbps이며, Mbps로 입력한 값은 저장 시 Kbps로 변환됩니다.
             </p>
 
-            <div className="mt-2 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-              <button
-                id="measureButton"
-                type="button"
-                className="h-12 rounded-md bg-teal-400 px-5 text-sm font-bold text-zinc-950 transition hover:bg-teal-300 focus:outline-none focus:ring-4 focus:ring-teal-300/30 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-              >
-                측정하고 기록하기
-              </button>
+            <div className="mt-2 grid gap-3 sm:grid-cols-[1fr_auto]">
               <button
                 id="saveButton"
                 type="submit"
-                className="h-12 rounded-md border border-white/10 px-5 text-sm font-semibold text-zinc-100 transition hover:border-teal-300/60 hover:bg-white/5 focus:outline-none focus:ring-4 focus:ring-teal-300/20 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-500"
+                className="h-12 rounded-md bg-teal-400 px-5 text-sm font-bold text-zinc-950 transition hover:bg-teal-300 focus:outline-none focus:ring-4 focus:ring-teal-300/30 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
               >
-                직접 기록
+                기록하기
               </button>
               <a
                 href="https://fast.com"
@@ -71,7 +63,7 @@ export default function Home() {
                 rel="noreferrer"
                 className="inline-flex h-12 items-center justify-center rounded-md border border-white/10 px-5 text-sm font-semibold text-zinc-100 transition hover:border-teal-300/60 hover:bg-white/5 focus:outline-none focus:ring-4 focus:ring-teal-300/20"
               >
-                fast.com
+                속도 측정하기
               </a>
             </div>
           </form>
