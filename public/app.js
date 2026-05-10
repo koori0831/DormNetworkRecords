@@ -1,19 +1,21 @@
 (function () {
   "use strict";
 
-  // TODO: Supabase 프로젝트 설정을 여기에 입력하세요.
-  // 예: const SUPABASE_URL = "https://xxxxxxxx.supabase.co";
-  // 예: const SUPABASE_ANON_KEY = "eyJhbGciOi...";
+  // TODO: Enter your Supabase project settings here.
+  // Example: const SUPABASE_URL = "https://xxxxxxxx.supabase.co";
+  // Example: const SUPABASE_ANON_KEY = "eyJhbGciOi...";
   const SUPABASE_URL = "https://kdbxkanborozdgcqcxsi.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkYnhrYW5ib3JvemRnY3FjeHNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMzkzMTgsImV4cCI6MjA5MzcxNTMxOH0.0bkefz9UOgRus_LxSANYPipsI9XlhCuU9jZPB2ziydQ";
 
   const ALLOWED_IP = "222.98.247.233";
   const TABLE_NAME = "SpeedRecord";
+  const TEST_DOWNLOAD_URL = "https://speed.cloudflare.com/__down?bytes=10485760";
 
   const form = document.getElementById("recordForm");
   const speedInput = document.getElementById("speedInput");
   const unitSelect = document.getElementById("unitSelect");
   const saveButton = document.getElementById("saveButton");
+  const measureButton = document.getElementById("measureButton");
   const statusMessage = document.getElementById("statusMessage");
   const accessPanel = document.getElementById("accessPanel");
   const recordCount = document.getElementById("recordCount");
@@ -32,6 +34,7 @@
     speedInput.disabled = !enabled;
     unitSelect.disabled = !enabled;
     saveButton.disabled = !enabled;
+    measureButton.disabled = !enabled;
   }
 
   function hasSupabaseConfig() {
@@ -40,6 +43,37 @@
 
   function toKbps(value, unit) {
     return unit === "mbps" ? value * 1000 : value;
+  }
+
+  function setBusy(isBusy) {
+    const enabled = !isBusy && isAllowedIp && hasSupabaseConfig();
+    setFormEnabled(enabled);
+    measureButton.textContent = isBusy ? "측정 중..." : "측정하고 기록하기";
+  }
+
+  async function measureDownloadSpeedKbps() {
+    const startTime = performance.now();
+    const response = await fetch(TEST_DOWNLOAD_URL, { cache: "no-store" });
+
+    if (!response.ok || !response.body) {
+      throw new Error("속도 측정용 데이터를 받을 수 없습니다.");
+    }
+
+    const reader = response.body.getReader();
+    let receivedLength = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      receivedLength += value.length;
+    }
+
+    const durationInSeconds = (performance.now() - startTime) / 1000;
+    if (durationInSeconds <= 0 || receivedLength <= 0) {
+      throw new Error("속도 측정 결과가 올바르지 않습니다.");
+    }
+
+    return Number(((receivedLength * 8) / durationInSeconds / 1000).toFixed(2));
   }
 
   function formatTime(value) {
@@ -176,18 +210,34 @@
     renderChart(records);
   }
 
-  async function saveRecord(event) {
-    event.preventDefault();
+  async function insertSpeedRecord(speed) {
+    const { error } = await supabaseClient
+      .from(TABLE_NAME)
+      .insert([{ speed }]);
 
+    if (error) {
+      throw error;
+    }
+  }
+
+  function canRecord() {
     if (!isAllowedIp) {
       setStatus("허용된 IP에서만 기록할 수 있습니다.", "error");
-      return;
+      return false;
     }
 
     if (!supabaseClient) {
       setStatus("Supabase URL과 Anon Key를 먼저 설정하세요.", "error");
-      return;
+      return false;
     }
+
+    return true;
+  }
+
+  async function saveRecord(event) {
+    event.preventDefault();
+
+    if (!canRecord()) return;
 
     const rawSpeed = Number(speedInput.value);
     if (!Number.isFinite(rawSpeed) || rawSpeed <= 0) {
@@ -197,23 +247,41 @@
     }
 
     const speed = Number(toKbps(rawSpeed, unitSelect.value).toFixed(2));
-    saveButton.disabled = true;
-    setStatus("기록 중입니다...", "muted");
 
-    const { error } = await supabaseClient
-      .from(TABLE_NAME)
-      .insert([{ speed }]);
-
-    saveButton.disabled = false;
-
-    if (error) {
+    try {
+      setBusy(true);
+      setStatus("기록 중입니다...", "muted");
+      await insertSpeedRecord(speed);
+      speedInput.value = "";
+      setStatus(`${speed.toLocaleString("ko-KR")} Kbps로 저장했습니다.`, "success");
+      await loadRecords();
+    } catch (error) {
       setStatus(`저장하지 못했습니다: ${error.message}`, "error");
-      return;
+    } finally {
+      setBusy(false);
     }
+  }
 
-    speedInput.value = "";
-    setStatus(`${speed.toLocaleString("ko-KR")} Kbps로 저장했습니다.`, "success");
-    await loadRecords();
+  async function measureAndRecord() {
+    if (!canRecord()) return;
+
+    try {
+      setBusy(true);
+      setStatus("약 10MB 데이터를 내려받아 속도를 측정 중입니다...", "muted");
+
+      const speed = await measureDownloadSpeedKbps();
+      speedInput.value = speed;
+      unitSelect.value = "kbps";
+
+      setStatus(`${speed.toLocaleString("ko-KR")} Kbps 측정 완료. 기록 중입니다...`, "muted");
+      await insertSpeedRecord(speed);
+      setStatus(`${speed.toLocaleString("ko-KR")} Kbps로 측정하고 저장했습니다.`, "success");
+      await loadRecords();
+    } catch (error) {
+      setStatus(`측정 또는 저장에 실패했습니다: ${error.message}`, "error");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function init() {
@@ -231,5 +299,6 @@
   }
 
   form.addEventListener("submit", saveRecord);
+  measureButton.addEventListener("click", measureAndRecord);
   init();
 })();
