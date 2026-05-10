@@ -9,7 +9,9 @@
 
   const ALLOWED_IP = "222.98.247.233";
   const TABLE_NAME = "SpeedRecord";
-  const TEST_DOWNLOAD_URL = "https://speed.cloudflare.com/__down?bytes=10485760";
+  const TEST_DOWNLOAD_URL = "https://speed.cloudflare.com/__down?bytes=157286400";
+  const TEST_DURATION_MS = 12000;
+  const MIN_SAMPLE_MS = 4000;
 
   const form = document.getElementById("recordForm");
   const speedInput = document.getElementById("speedInput");
@@ -51,9 +53,13 @@
     measureButton.textContent = isBusy ? "측정 중..." : "측정하고 기록하기";
   }
 
-  async function measureDownloadSpeedKbps() {
+  async function measureDownloadSpeedKbps(onProgress) {
+    const controller = new AbortController();
     const startTime = performance.now();
-    const response = await fetch(TEST_DOWNLOAD_URL, { cache: "no-store" });
+    const response = await fetch(TEST_DOWNLOAD_URL, {
+      cache: "no-store",
+      signal: controller.signal
+    });
 
     if (!response.ok || !response.body) {
       throw new Error("속도 측정용 데이터를 받을 수 없습니다.");
@@ -66,6 +72,18 @@
       const { done, value } = await reader.read();
       if (done) break;
       receivedLength += value.length;
+
+      const elapsedMs = performance.now() - startTime;
+      if (typeof onProgress === "function" && elapsedMs >= 1000) {
+        const currentKbps = (receivedLength * 8) / (elapsedMs / 1000) / 1000;
+        onProgress(currentKbps, elapsedMs);
+      }
+
+      if (elapsedMs >= TEST_DURATION_MS && elapsedMs >= MIN_SAMPLE_MS) {
+        await reader.cancel();
+        controller.abort();
+        break;
+      }
     }
 
     const durationInSeconds = (performance.now() - startTime) / 1000;
@@ -267,9 +285,12 @@
 
     try {
       setBusy(true);
-      setStatus("약 10MB 데이터를 내려받아 속도를 측정 중입니다...", "muted");
+      setStatus("최대 약 12초 동안 다운로드 속도를 측정 중입니다...", "muted");
 
-      const speed = await measureDownloadSpeedKbps();
+      const speed = await measureDownloadSpeedKbps((currentKbps, elapsedMs) => {
+        const seconds = Math.round(elapsedMs / 1000);
+        setStatus(`${seconds}초 측정 중... 현재 약 ${currentKbps.toLocaleString("ko-KR", { maximumFractionDigits: 0 })} Kbps`, "muted");
+      });
       speedInput.value = speed;
       unitSelect.value = "kbps";
 
