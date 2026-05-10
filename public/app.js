@@ -9,10 +9,11 @@
 
   const ALLOWED_IP = "222.98.247.233";
   const TABLE_NAME = "SpeedRecord";
-  const TEST_DOWNLOAD_URL = "https://speed.cloudflare.com/__down?bytes=209715200";
+  const CLOUDFLARE_TEST_URL = "https://speed.cloudflare.com/__down?bytes=209715200";
+  const FAST_TARGETS_URL = `${SUPABASE_URL}/functions/v1/fast-targets`;
   const TEST_DURATION_MS = 15000;
   const MIN_SAMPLE_MS = 5000;
-  const PARALLEL_STREAMS = 4;
+  const PARALLEL_STREAMS = 5;
 
   const form = document.getElementById("recordForm");
   const speedInput = document.getElementById("speedInput");
@@ -54,14 +55,45 @@
     measureButton.textContent = isBusy ? "측정 중..." : "측정하고 기록하기";
   }
 
-  async function measureDownloadSpeedKbps(onProgress) {
+  function addCacheBust(url, index) {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}stream=${index}&cacheBust=${Date.now()}`;
+  }
+
+  async function getFastTargets() {
+    const response = await fetch(FAST_TARGETS_URL, {
+      cache: "no-store",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        authorization: `Bearer ${SUPABASE_ANON_KEY}`
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Fast.com 대상 조회 실패: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const targets = (data.targets || [])
+      .map((target) => target.url)
+      .filter(Boolean);
+
+    if (targets.length === 0) {
+      throw new Error("Fast.com 측정 대상이 없습니다.");
+    }
+
+    return targets;
+  }
+
+  async function measureDownloadSpeedKbps(targetUrls, onProgress) {
     const startTime = performance.now();
+    const urls = targetUrls && targetUrls.length > 0 ? targetUrls : [CLOUDFLARE_TEST_URL];
     let receivedLength = 0;
     let lastProgressAt = 0;
 
     async function runStream(index) {
       const controller = new AbortController();
-      const url = `${TEST_DOWNLOAD_URL}&stream=${index}&cacheBust=${Date.now()}`;
+      const url = addCacheBust(urls[index % urls.length], index);
 
       try {
         const response = await fetch(url, {
@@ -307,12 +339,22 @@
 
     try {
       setBusy(true);
-      setStatus("최대 약 15초 동안 병렬 다운로드 속도를 측정 중입니다...", "muted");
+      setStatus("Fast.com 측정 대상을 가져오는 중입니다...", "muted");
 
-      const speed = await measureDownloadSpeedKbps((currentKbps, elapsedMs) => {
+      let targetUrls = [];
+      try {
+        targetUrls = await getFastTargets();
+      } catch (error) {
+        setStatus(`Fast.com 대상 조회 실패. Cloudflare로 측정합니다: ${error.message}`, "muted");
+      }
+
+      setStatus(`${targetUrls.length > 0 ? "Netflix" : "Cloudflare"} 병렬 다운로드 속도를 측정 중입니다...`, "muted");
+
+      const speed = await measureDownloadSpeedKbps(targetUrls, (currentKbps, elapsedMs) => {
         const seconds = Math.round(elapsedMs / 1000);
         setStatus(`${seconds}초 측정 중... 현재 약 ${currentKbps.toLocaleString("ko-KR", { maximumFractionDigits: 0 })} Kbps`, "muted");
       });
+
       speedInput.value = speed;
       unitSelect.value = "kbps";
 

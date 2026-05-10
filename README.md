@@ -21,3 +21,13 @@ create table "SpeedRecord" (
 npm install
 npm run dev
 ```
+
+## Fast.com 유사 측정
+
+Netflix 테스트 URL 목록은 브라우저에서 직접 가져올 수 없어 Supabase Edge Function으로 프록시합니다.
+
+```bash
+supabase functions deploy fast-targets
+```
+
+함수가 아직 배포되지 않았거나 실패하면 사이트는 Cloudflare 병렬 다운로드 측정으로 자동 대체됩니다.
